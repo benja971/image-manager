@@ -8,13 +8,9 @@ import { ImagesService } from './images.service';
 export class ImagesController {
   constructor(private readonly imagesService: ImagesService) {}
 
-  @Get('upload-url')
-  getUploadUrl(@Query() { fileName }: { fileName: string }) {
-    return this.imagesService.getUploadUrl(fileName);
-  }
   @Get(':fileName')
-  async getFile(@Param() { fileName }: { fileName: string }, @Query() query: { size?: string }, @Res() res: Response) {
-    console.log(`Received request for file: ${fileName} with size: ${query.size}`);
+  async getFile(@Param('fileName') fileName: string, @Query('size') size: string, @Res() res: Response) {
+    console.log(`Received request for file: ${fileName} with size: ${size}`);
     const ext = path.extname(fileName);
 
     if (!ext) {
@@ -22,9 +18,8 @@ export class ImagesController {
       return res.status(400).send('Invalid file name');
     }
 
-    res.setHeader('Content-Type', 'Content type: image/png');
-
-    const size = query.size;
+    const mimeType = this.getMimeType(ext);
+    res.setHeader('Content-Type', mimeType);
 
     if (size && parseInt(size, 10) > 0) {
       const baseName = path.basename(fileName, ext);
@@ -37,42 +32,51 @@ export class ImagesController {
         if (file) {
           console.log(`Resized file found: ${newFileName}`);
           res.setHeader('Content-Disposition', `inline; filename="${newFileName}"`);
-
           return res.send(file);
         }
       } catch (error) {
         console.error(`Error retrieving resized file: ${newFileName}`, error);
+      }
 
+      try {
         console.log(`Generating resized image for file: ${fileName}`);
-        const generated = sharp(await this.imagesService.getFile(fileName)).resize(parseInt(size, 10));
-
-        const buffer = await generated.toBuffer();
+        const originalFile = await this.imagesService.getFile(fileName);
+        const resizedBuffer = await sharp(originalFile).resize(parseInt(size, 10)).toBuffer();
 
         console.log(`Uploading resized image as: ${newFileName}`);
-        await this.imagesService.uploadFile(newFileName, buffer);
+        await this.imagesService.uploadFile(newFileName, resizedBuffer);
 
         res.setHeader('Content-Disposition', `inline; filename="${newFileName}"`);
-
-        return res.send(buffer);
+        return res.send(resizedBuffer);
+      } catch (error) {
+        console.error(`Error generating or uploading resized image: ${newFileName}`, error);
+        return res.status(500).send('Error processing image');
       }
     }
 
-    console.log(`Returning original file: ${fileName}`);
-
-    const file = await this.imagesService.getFile(fileName);
-    res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
-
-    res.send(file);
+    try {
+      console.log(`Returning original file: ${fileName}`);
+      const file = await this.imagesService.getFile(fileName);
+      res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+      return res.send(file);
+    } catch (error) {
+      console.error(`Error retrieving original file: ${fileName}`, error);
+      return res.status(404).send('File not found');
+    }
   }
 
-  @Get(':fileName/url')
-  async getFileUrl(@Param() { fileName }: { fileName: string }) {
-    return this.imagesService.getFileUrl(fileName);
-  }
-
-  @Get()
-  async listFiles() {
-    return this.imagesService.listFiles();
+  private getMimeType(ext: string): string {
+    switch (ext.toLowerCase()) {
+      case '.png':
+        return 'image/png';
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.gif':
+        return 'image/gif';
+      default:
+        return 'application/octet-stream';
+    }
   }
 
   @Delete(':fileName')
